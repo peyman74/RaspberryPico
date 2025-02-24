@@ -1,5 +1,7 @@
-// Ver 4.02.05 revision for presentation in order to move between two points on and off
+//Ver 04_02_04 (developmpent Ver 04_02_03 to multiple motors - moving all motors in Manual, Auto/Parallel, and Auto/Sequential Modes) - moving PID factors
+// into the class in order to be able define unic PID factors for each object (motor) 
 //Peiman Edalatjoo 94112 - HKA - February 2025
+//peyman.edalatjoo@proton.me
 
 #include <Arduino.h>
 #include <pico/multicore.h>
@@ -13,11 +15,8 @@
 #define POT_MAX_DEVIATION  10 // Default ADC resolution with 12 bits/: 3.3 volt / 2^12= 0.8 mv. POT_MAX_DEVIATION*0.8. with 10 it is 8mv - Filter on POT
 #define LED_PIN LED_BUILTIN
 
-
-const int EncoderCountsPerRevolution = 2450;  //// Adjust based on the encoder experiment
+const int EncoderCountsPerRevolution = 2000;  //// Adjust based on the encoder experiment
 const int ZeroInterpolationFeed = 50;
-const long interval = 2000;  
-int ledState = LOW;  // ledState used to set the LED
 
 enum class MotorStatus {
     STOP_REST,
@@ -55,7 +54,6 @@ class motor {
 
   double Kp, Ki, Kd; // Motor-specific PID gains Ki= T/Ti, Kd= Td/T , T = PID sample periode. imprtant: Ki= T/Ti , T sample  and Kd= Td/T. if in PID control loop you are not using either of them, put their value equal zero. in order to avoid from devision by zero I used Ki instead of Ti!
   double set_value;
-  double prev_set_value=0;
   double potValue=0, previous_potValue=0;
   unsigned long last_time = 0;  // Last time the PID was computed
   int filterCount=0, numberOfCoefficient=0 ;
@@ -80,11 +78,9 @@ public:
   void initializeMotorInManual() { previous_potValue = analogRead(potentiometer_jogging_pin); interpolationSuccessfullyDone = true; filterCount=0; potFilterCounter=0;};
   int getId(){return id;};
   operationMode getMode() const { return mode;};
-  void setSetPoint(double inputValue) {set_value = inputValue;};
-  void setPrevSetPoint(double inputValue) {prev_set_value = inputValue;};
+  void setSetpoint(double inputValue) {set_value = inputValue;};
   void setStatus(MotorStatus statusValue) { motorStatus = statusValue; };
-  double getSetPoint() {return set_value;};
-  double getPrevSetPoint() { return prev_set_value; };
+  double getSetpoint() {return set_value;};
   bool getControlMode() {return  controlMode;};
   MotorStatus getStatus() { return motorStatus; };
   double getError() {return error;};
@@ -111,7 +107,7 @@ int numMotors=2;
 motor** motors = new motor*[numMotors];  // Correctly allocate memory for motor pointers
 
 motor::motor(int id, int pwm_pin, int forward_pin, int backward_pin, int encoderA_pin, int encoderB_pin, int potentiometer_jogging_pin, int speed_pwmValue, double Kp, double Ki, double Kd)
- : mode(operationMode::PARALLEL_MOVEMENT), Kp(Kp), Ki(Ki), Kd(Kd) {
+ : mode(operationMode::SEQUENTIAL_MOVEMENT), Kp(Kp), Ki(Ki), Kd(Kd) {
   this->id = id;
   this->pwm_pin = pwm_pin;
   this->forward_pin = forward_pin;
@@ -248,68 +244,98 @@ void motor::setMotor() {
 
 }
 
-
-const double tempSetPoint1 [2]= {0,0};
-const double tempSetPoint2 [2]= {90,90};
-
 void setup() {
   Serial.begin(115200);
-   
+  
 
-  motors[0] = new motor(0, 10, 14, 15, 18, 19, 26, PWM_MIN_SPEED, 3.0, 0.0, 0);
-  motors[1] = new motor(1, 11, 16, 17, 20, 21, 26, PWM_MIN_SPEED, 3.0, 0.0, 0);
+  motors[0] = new motor(0, 10, 14, 15, 18, 19, 26, PWM_MIN_SPEED, 3.0, 0.01, 0);
+  motors[1] = new motor(1, 11, 16, 17, 20, 21, 26, PWM_MIN_SPEED, 3.0, 0.01, 0);
   
   for (int i = 0; i < numMotors; i++) {
     // Adjust pin numbers as needed to make programming easier
   //  motors[i] = new motor(i, 10 + i, 14 + i, 15 + i, 18 + i, 19 + i, 26 + i, PWM_MIN_SPEED);
     motors[i]->begin();
-    motors[i]->setSetPoint(tempSetPoint2[i]);
-    motors[i]->initializeMotorInAuto();
-
   }
 }  
 
+
 void loop() {
-    static bool previousAllMotorInterpolationDone = false;
-    static unsigned long currentMillis = 0;
-    static bool ledState = LOW;  
-    // Assume all motors are interpolated until proven otherwise
-    bool allMotorInterpolationDone = true;
+  if (Serial.available() > 0) {
+    Serial.print("m or M = Manual, e.g: P 30 60, paralell movement, eg: S 30 60, Sequencial movement");
+    String input = Serial.readStringUntil('\n');
 
-    for (int i = 0; i < numMotors; i++)
-        motors[i]->PID_Function();
-    for (int i = 0; i < numMotors; i++) 
-        if (!motors[i]->getIntorpolationStatus()) 
-            allMotorInterpolationDone = false;  //even one motor is interpolating, then go false for entire process 
-
-    // Detect rising edge of allMotorInterpolationDone
-    if (allMotorInterpolationDone && !previousAllMotorInterpolationDone) {
-        currentMillis = millis();  // This will only execute once when the rising edge is detected
-        ledState = !ledState;
-        if (ledState == HIGH)
-            for (int i = 0; i < numMotors; i++) 
-                motors[i]->setSetPoint(tempSetPoint1[i]);
-        else
-            for (int i = 0; i < numMotors; i++) 
-                motors[i]->setSetPoint(tempSetPoint2[i]);    
-        digitalWrite(LED_PIN, ledState); 
+    String setpoints[numMotors+1];
+    int setpointCount = 0;
+    
+    // Split the input string into individual mode + setpoints
+    int startIndex = 0;
+    for (int i = 0; i < input.length(); i++) {
+      if (input.charAt(i) == ' ' || i == input.length() - 1) {
+        setpoints[setpointCount] = input.substring(startIndex, i == input.length() - 1 ? i + 1 : i);
+        startIndex = i + 1;
+        setpointCount++;
+        if (setpointCount == numMotors+1) break;
+      }
     }
-
-    if (allMotorInterpolationDone && (millis() - currentMillis >= interval)) {
-        for (int i = 0; i < numMotors; i++) 
+    if (setpoints[0] == "M" || setpoints[0]== "m") {
+      Serial.println("Manual mode active for all motors");
+      for (int i = 0; i < numMotors; i++) {
+        motors[i]->initializeMotorInManual();
+        motors[i]->setMode(operationMode::MANUAL);
+      }
+    }
+    else if (setpointCount == numMotors+1){   
+      if (setpoints[0] == "P" || setpoints[0] == "p") {
+           for (int i = 0; i < numMotors; i++) {
             motors[i]->initializeMotorInAuto();
-    }     
+            motors[i]->setMode(operationMode::PARALLEL_MOVEMENT);
+          }
+      } 
+      else if (setpoints[0] == "S" || setpoints[0] == "s") {
+          for (int i = 0; i < numMotors; i++) {
+            motors[i]->initializeMotorInAuto();
+            motors[i]->setMode(operationMode::SEQUENTIAL_MOVEMENT);
+          }
+      }
+      for (int i = 0; i < numMotors; i++) {
+        motors[i]->setSetpoint(constrain(setpoints[i+1].toDouble(), 0, 360));
+        motors[i]->setStatus(MotorStatus::RUN);
+        Serial.print("Motor ");
+        Serial.print(i + 1);
+        Serial.print(" setpoint: ");
+        Serial.println(motors[i]->getSetpoint());
+      }
+    }
+    else{ Serial.println("Invalid input. Please enter setpoints for all motors."); }          
+  }
 
-    previousAllMotorInterpolationDone = allMotorInterpolationDone;  // Update the previous state
+  switch(motors[0]->getMode()){
+    case operationMode::MANUAL:
+    case operationMode::PARALLEL_MOVEMENT:
+      for (int i = 0; i < numMotors; i++)
+        motors[i]->PID_Function();
+      break;
+    case operationMode::SEQUENTIAL_MOVEMENT:
+      for (int i = 0; i < numMotors; ) {
+        if(!(motors[i]->getIntorpolationStatus())){
+          motors[i]->PID_Function();
+          motors[i]->setStatus(MotorStatus::NORM_INTERPOL);
+        }
+        else{
+          motors[i]->setStatus(MotorStatus::STOP_REST);
+          i++;
+        }
+      }
+      break;      
+  }
 }
-
 
 void motor::printDebug(){
     Serial.println();
     Serial.print("MotorId:");
     Serial.print(getId());
     Serial.print(", Set point: ");
-    Serial.print(getSetPoint());
+    Serial.print(getSetpoint());
     Serial.print(", Current position: ");
     Serial.print(getPosition());
     Serial.print(", Error: ");

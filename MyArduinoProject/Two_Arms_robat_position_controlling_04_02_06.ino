@@ -14,7 +14,7 @@
 #define LED_PIN LED_BUILTIN
 
 
-const int EncoderCountsPerRevolution = 2450;  //// Adjust based on the encoder experiment
+const int EncoderCountsPerRevolution = 2000;  //// Adjust based on the encoder experiment
 const int ZeroInterpolationFeed = 50;
 const long interval = 4000;  
 int ledState = LOW;  // ledState used to set the LED

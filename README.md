@@ -19,7 +19,7 @@ Advantages of Dual Input Modes
 ![image](https://github.com/user-attachments/assets/e73874cc-0a92-466a-86c7-dd1de6ff2610)
 ![image](https://github.com/user-attachments/assets/d3c09fb0-2621-4753-a5ef-4c763b40d659)
 
-Picture by Profesor Professor Samuel E. de Lucena
+Picture by Professor Samuel E. de Lucena
 
 Note: The Joystick in this figure could not be provided hence it was substituted with two potentiometers. 
 
